@@ -15,7 +15,25 @@ import torchvision.ops as ops
 logger = OneTimeLogger('ot_log.txt', clear=True)
 
 def get_sword_contrast(object_queue: torch.tensor, sword_pos: torch.tensor, sword_neg: torch.tensor) -> torch.tensor:
-    pass
+    """
+    Calculate sword contrastive loss.
+    - object_queue: The object queue in SWORD.
+    - sword_pos: positive samples(k+) in SWORD, (pos, dim)
+    - sword_neg: negative samples(k-) in SWORD, (neg, dim)
+
+    returns: contrastive loss L_{con}.
+    """
+    object_center = object_queue.object_center().detach()
+    logger.log_id(f'center shape: {object_center.shape}, pos & neg shape: {sword_pos.shape}, {sword_neg.shape}', 99)
+    pos_product = torch.einsum('d,pd->p', [object_center, sword_pos]) # [pos]
+    neg_product = torch.einsum('d,nd->n', [object_center, sword_neg]) # [neg]
+    
+    all_sum = torch.logsumexp(torch.cat([pos_product, neg_product]), 0)
+    pos_sum = torch.logsumexp(torch.cat([pos_product]), 0)
+
+    logger.log_id(f'all_sum = {all_sum}, pos_sum = {pos_sum}', 100)
+
+    return all_sum - pos_sum
 
 def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_key, hs_ref, ref_cls, object_queue):
 
@@ -84,8 +102,10 @@ def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_ke
             key_embed_i=nn.functional.normalize(key_embed_i.float(),dim=1)    
             cosine = torch.einsum('nc,kc->nk',[aux_contrastive_embed,key_embed_i])
 
+            logger.log_id(f'original contrast: {contrast}', 66)
 
-            contrast_items.append({'contrast':contrast,'label':contrastive_label, 'aux_consin':cosine,'aux_label':aux_contrastive_label})
+            contrast_items.append({'contrast':contrast,'label':contrastive_label, 'aux_consin':cosine,'aux_label':aux_contrastive_label,
+                                   'sword_contrast': sword_contrast})
 
     return contrast_items
 

@@ -30,7 +30,8 @@ from .matcher import build_matcher
 
 from .segmentation_condInst import (CondInst_segm,
                            dice_loss, sigmoid_focal_loss)
-                           
+
+from ..util.ot_logger import OneTimeLogger
 from .deformable_transformer import build_deforamble_transformer
 import copy
 from fvcore.nn import giou_loss, smooth_l1_loss
@@ -256,7 +257,7 @@ class SetCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.mask_out_stride = mask_out_stride
         self.num_frames = num_frames
-
+        self.logger = OneTimeLogger('ot_log3.txt')
 
     def loss_labels(self, outputs,  targets, ref_target, indices, num_boxes, log=True):
         """Classification loss (NLL)
@@ -420,11 +421,14 @@ class SetCriterion(nn.Module):
         qd_items = outputs['pred_qd']
         contras_loss = 0
         aux_loss = 0
+        sword_loss = 0
         if len(qd_items) == 0:
             losses = {'loss_reid': outputs['pred_logits'].sum()*0,
-                   'loss_reid_aux':  outputs['pred_logits'].sum()*0 }
+                   'loss_reid_aux':  outputs['pred_logits'].sum()*0,
+                   'loss_sword': outputs['pred_logits'].sum()*0}
             return losses
         for qd_item in qd_items:
+            sword_loss += qd_item['sword_contrast']
             pred = qd_item['contrast'].permute(1,0)
             label = qd_item['label'].unsqueeze(0)
             # contrastive loss
@@ -448,8 +452,10 @@ class SetCriterion(nn.Module):
             aux_loss += (torch.abs(aux_pred - aux_label)**2).mean()
 
 
-        losses = {'loss_reid': contras_loss.sum()/len(qd_items),
-                   'loss_reid_aux':  aux_loss/len(qd_items) }
+        losses = {'loss_reid': contras_loss.sum()/len(qd_items) + 1 * sword_loss / len(qd_items),
+                   'loss_reid_aux':  aux_loss/len(qd_items)}
+        self.logger.log_id(f'losses: {losses}', 1)
+        self.logger.log_id(f'qd_item.keys: {qd_item.keys()}', 2)
 
         return losses
     
