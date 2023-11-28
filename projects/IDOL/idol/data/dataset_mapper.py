@@ -4,6 +4,7 @@ import random
 import numpy as np
 from typing import List, Union
 import torch
+import os
 
 from detectron2.config import configurable
 from detectron2.structures import (

@@ -8,9 +8,16 @@ import torch
 import torch.nn as nn
 import torchvision
 from ..util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+from ..util.ot_logger import OneTimeLogger
 import random
 import torchvision.ops as ops
-def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_key, hs_ref, ref_cls):
+
+logger = OneTimeLogger('ot_log.txt', clear=True)
+
+def get_sword_contrast(object_queue: torch.tensor, sword_pos: torch.tensor, sword_neg: torch.tensor) -> torch.tensor:
+    pass
+
+def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_key, hs_ref, ref_cls, object_queue):
 
     ref_embeds = embed_head(hs_ref)
     key_embedds = embed_head(hs_key)
@@ -27,20 +34,36 @@ def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_ke
         # tgt_valid = tgt_valid[:,1]    
         ref_box_bz = ref_box[bz_i]
         ref_cls_bz = ref_cls[bz_i]
+        logger.log_id(f'ref_box_bz shape={ref_box_bz.shape}', 1)
+        logger.log_id(f'ref_cls_bz shape={ref_cls_bz.shape}', 2)
+        logger.log_id(f'tgt_bbox shape={tgt_bbox.shape}', 3)
+        logger.log_id(f'tgt_labels shape={tgt_labels.shape}', 4)
         tgt_valid = v["valid"]
                
         contrastive_pos = get_pos_idx(ref_box_bz,ref_cls_bz,tgt_bbox,tgt_labels, tgt_valid)
-
-
+        # pos_idx, neg_idx = contrastive_pos
+        # pos_idx = torch.stack(pos_idx)
+        # logger.log_id(f'pos_idx = {str(pos_idx)}', 5)
         for inst_i, (valid,matched_query_id) in enumerate(zip(tgt_valid,indices)):
             
             if not valid:  
                 continue
             gt_box = tgt_bbox[inst_i].unsqueeze(0)
             key_embed_i = key_embedds[bz_i,matched_query_id].unsqueeze(0)
-
+            # should be the inst_i's positive and negative
             pos_embed = ref_embeds[bz_i][contrastive_pos[0][inst_i]]
             neg_embed = ref_embeds[bz_i][~contrastive_pos[1][inst_i]]
+
+            """
+            calculate sword contrastive loss
+            """
+            logger.log_id(f'pos_embed shape={pos_embed.shape}, neg_embed shape={neg_embed.shape}', 6)
+            sword_pos = ref_embeds[bz_i][contrastive_pos[0][inst_i]]
+            sword_neg = ref_embeds[bz_i][contrastive_pos[1][inst_i] & (~contrastive_pos[0][inst_i])]
+            sword_contrast = get_sword_contrast(object_queue, sword_pos, sword_neg)
+            logger.log_id(f'sword_pos shape={sword_pos.shape}, sword_neg shape={sword_neg.shape}', 7)
+
+
             contrastive_embed = torch.cat([pos_embed,neg_embed],dim=0)
             contrastive_label = torch.cat([one.repeat(len(pos_embed)),zero.repeat(len(neg_embed))],dim=0) 
 

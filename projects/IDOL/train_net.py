@@ -14,7 +14,7 @@ import time
 from typing import Any, Dict, List, Set
 
 import torch
-
+import datetime
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
@@ -23,8 +23,8 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.evaluation import COCOEvaluator, verify_results, DatasetEvaluators
 from detectron2.solver.build import maybe_add_gradient_clipping
 
-from detectron2.projects.idol import add_idol_config, build_detection_train_loader, build_detection_test_loader
-from detectron2.projects.idol.data import (
+from idol import add_idol_config, build_detection_train_loader, build_detection_test_loader
+from idol.data import (
     YTVISDatasetMapper, YTVISEvaluator, get_detection_dataset_dicts,DetrDatasetMapper,
   COCO_CLIP_DatasetMapper
 
@@ -178,4 +178,5 @@ if __name__ == "__main__":
         machine_rank=args.machine_rank,
         dist_url=args.dist_url,
         args=(args,),
+        timeout=datetime.timedelta(seconds=3600)
     )

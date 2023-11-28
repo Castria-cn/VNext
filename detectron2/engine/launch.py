@@ -95,6 +95,7 @@ def _distributed_worker(
     assert torch.cuda.is_available(), "cuda is not available. Please check your installation."
     global_rank = machine_rank * num_gpus_per_machine + local_rank
     try:
+        print(f'successfully init process group with timeout={timeout}')
         dist.init_process_group(
             backend="NCCL",
             init_method=dist_url,

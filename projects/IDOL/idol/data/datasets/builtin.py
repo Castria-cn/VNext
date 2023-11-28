@@ -12,9 +12,9 @@ from .ytvis import (
 # ==== Predefined splits for YTVIS 2019 ===========
 _PREDEFINED_SPLITS_YTVIS_2019 = {
     "ytvis_2019_train": ("ytvis_2019/train/JPEGImages",
-                         "ytvis_2019/annotations/instances_train_sub.json"),
-    "ytvis_2019_val": ("ytvis_2019/val/JPEGImages",
-                       "ytvis_2019/annotations/instances_val_sub.json"),
+                         "ytvis_2019/train.json"),
+    "ytvis_2019_val": ("ytvis_2019/valid/JPEGImages",
+                       "ytvis_2019/valid.json"),
     "ytvis_2019_test": ("ytvis_2019/test/JPEGImages",
                         "ytvis_2019/test.json"),
     "ytvis_2019_dev": ("ytvis_2019/train/JPEGImages",

@@ -136,18 +136,24 @@ class TrainerBase:
             start_iter, max_iter (int): See docs above
         """
         logger = logging.getLogger(__name__)
-        logger.info("Starting training from iteration {}".format(start_iter))
+        logger.info("Starting Training from iteration {}".format(start_iter))
 
         self.iter = self.start_iter = start_iter
         self.max_iter = max_iter
 
         with EventStorage(start_iter) as self.storage:
             try:
+                # logger.info('checkpoint 1')
                 self.before_train()
+                # logger.info('checkpoint 2')
                 for self.iter in range(start_iter, max_iter):
+                    # logger.info('checkpoint 3')
                     self.before_step()
+                    # logger.info('checkpoint 4')
                     self.run_step()
+                    # logger.info('checkpoint 5')
                     self.after_step()
+                    # logger.info('checkpoint 6')
                 # self.iter == max_iter can be used by `after_train` to
                 # tell whether the training successfully finished or failed
                 # due to exceptions.

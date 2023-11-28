@@ -24,6 +24,8 @@ import torch.nn.functional as F
 from PIL import Image
 
 
+from .object_queue import ObjectQueue
+from ..util.ot_logger import OneTimeLogger
 from ..util.misc import NestedTensor, interpolate, nested_tensor_from_tensor_list, inverse_sigmoid
 from .pos_neg_select import select_pos_neg
 
@@ -73,6 +75,9 @@ class CondInst_segm(nn.Module):
         
 
         self.reid_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3)
+
+        self.logger = OneTimeLogger('ot_log2.txt')
+        self.object_queue = ObjectQueue(300)
 
     def forward(self, samples, det_targets, ref_targets, criterion, train=False):
         image_sizes = samples.image_sizes
@@ -184,6 +189,15 @@ class CondInst_segm(nn.Module):
                 mask_head_params.append(dynamic_mask_head_params[i, pred_i].unsqueeze(0))
 
                 # This is the image size after data augmentation (so as the gt boxes & masks)
+                if lvl == enc_lay_num - 1:
+                    """
+                    last layer, select hungarian matching items to object queue
+                    """
+                    best_items = hs_ref[-1, i, pred_i] # (best_match_num, c)
+                    best_embeds = self.reid_embed_head(best_items) # (best_match_num, d)
+                    for item in best_embeds:
+                        self.object_queue.enqueue(item)
+                    self.logger.log_id(f'hs_ref shape = {hs_ref.shape}, hs_ref[-1, i, pred_i].shape={hs_ref[-1, i, pred_i].shape}', 1)
                 
                 orig_h, orig_w = image_sizes[i]
                 orig_h = torch.as_tensor(orig_h).to(reference)
@@ -211,7 +225,7 @@ class CondInst_segm(nn.Module):
 
 
         ref_cls = self.detr.class_embed[-1](hs_ref[-1]).sigmoid()
-        contrast_items = select_pos_neg(inter_references_ref[-1], matched_ids, ref_targets,det_targets, self.reid_embed_head, hs[-1], hs_ref[-1], ref_cls)
+        contrast_items = select_pos_neg(inter_references_ref[-1], matched_ids, ref_targets,det_targets, self.reid_embed_head, hs[-1], hs_ref[-1], ref_cls, self.object_queue)
 
         # outputs['pred_samples'] = inter_samples[-1]
         
