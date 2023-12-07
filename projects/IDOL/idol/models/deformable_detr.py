@@ -62,6 +62,7 @@ class DeformableDETR(nn.Module):
         self.num_classes = num_classes
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
+        self.box_iou_head = MLP(hidden_dim, hidden_dim, 1, 3)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.num_feature_levels = num_feature_levels
         
@@ -415,6 +416,26 @@ class SetCriterion(nn.Module):
             "loss_dice": (src_masks*0).sum(),
             }
         return losses
+    
+    def loss_iou(self, outputs,  targets, ref_target, indices, num_boxes):
+        self.logger.log_id(outputs.keys(), 1214214)
+        pred_ious = outputs['pred_ious']
+        gt_ious = outputs['gt_ious']
+
+        if len(pred_ious) == 0:
+            return {'loss_iou': pred_ious.sum() * 0}
+
+        iou_loss = 0
+        for pred_iou, gt_iou in zip(pred_ious, gt_ious):
+            if len(pred_iou) == 0:
+                continue # invalid
+            # (n, ) and (n, ), calculate cross entropy loss
+            iou_loss += F.binary_cross_entropy(pred_iou, gt_iou)
+        
+        if torch.isnan(iou_loss).any().item():
+            self.logger.log_id(f'pred_ious: {pred_ious}, gt_ious: {gt_ious}', 123123)
+
+        return {'loss_iou': iou_loss}
 
     def loss_reid(self, outputs,  targets, ref_target, indices, num_boxes):
 
@@ -424,8 +445,7 @@ class SetCriterion(nn.Module):
         sword_loss = 0
         if len(qd_items) == 0:
             losses = {'loss_reid': outputs['pred_logits'].sum()*0,
-                   'loss_reid_aux':  outputs['pred_logits'].sum()*0,
-                   'loss_sword': outputs['pred_logits'].sum()*0}
+                   'loss_reid_aux':  outputs['pred_logits'].sum()*0}
             return losses
         for qd_item in qd_items:
             sword_loss += qd_item['sword_contrast']
@@ -452,7 +472,7 @@ class SetCriterion(nn.Module):
             aux_loss += (torch.abs(aux_pred - aux_label)**2).mean()
 
 
-        losses = {'loss_reid': contras_loss.sum()/len(qd_items) + 1 * sword_loss / len(qd_items),
+        losses = {'loss_reid': contras_loss.sum()/len(qd_items) + 2 * sword_loss / len(qd_items),
                    'loss_reid_aux':  aux_loss/len(qd_items)}
         self.logger.log_id(f'losses: {losses}', 1)
         self.logger.log_id(f'qd_item.keys: {qd_item.keys()}', 2)
@@ -479,7 +499,8 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
             'masks': self.loss_masks,
-            'reid': self.loss_reid
+            'reid': self.loss_reid,
+            'iou': self.loss_iou
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs,  targets, ref_target, indices, num_boxes, **kwargs)
@@ -497,7 +518,6 @@ class SetCriterion(nn.Module):
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)
         num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
-
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
@@ -510,7 +530,7 @@ class SetCriterion(nn.Module):
                 # indices = self.matcher(aux_outputs, targets)
                 indices = indices_list[i]
                 for loss in self.losses:
-                    if loss == 'reid':
+                    if loss == 'reid' or loss == 'iou':
                         continue
                     kwargs = {}
                     if loss == 'labels':

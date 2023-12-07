@@ -186,7 +186,7 @@ class IDOL(nn.Module):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
   
-        losses = ['labels', 'boxes', 'masks','reid']
+        losses = ['labels', 'boxes', 'masks', 'reid', 'iou']
         
 
         self.criterion = SetCriterion(self.num_classes, matcher, weight_dict, losses, 

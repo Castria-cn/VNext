@@ -14,6 +14,9 @@ from torch._C import device
 import torch.nn.functional as F
 import torchvision.ops as ops
 from ..util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou, generalized_multi_box_iou
+from ..util.ot_logger import OneTimeLogger
+
+logger = OneTimeLogger('ot_log4.txt')
 
 
 class HungarianMatcher(nn.Module):
@@ -52,6 +55,7 @@ class HungarianMatcher(nn.Module):
             out_bbox = outputs["pred_boxes"]  
             indices = []
             matched_ids = []
+            ious = []
             assert bs == len(targets) 
             for batch_idx in range(bs):
                 bz_boxes = out_bbox[batch_idx] #[300,4]
@@ -64,6 +68,7 @@ class HungarianMatcher(nn.Module):
                     matched_qidx = torch.arange(0,0).to(bz_out_prob)
                     indices.append(indices_batchi)
                     matched_ids.append(matched_qidx)
+                    ious.append(torch.arange(0,0).to(bz_out_prob))
                     continue
 
                 bz_gtboxs = targets[batch_idx]['boxes'].reshape(num_insts,nf,4)[:,0] #[num_gt, 4]
@@ -85,14 +90,15 @@ class HungarianMatcher(nn.Module):
                 cost[~fg_mask] = cost[~fg_mask] + 10000.0
 
                 # if bz_gtboxs.shape[0]>0:
-                indices_batchi, matched_qidx = self.dynamic_k_matching(cost, pair_wise_ious, bz_gtboxs.shape[0])
+                indices_batchi, matched_qidx, iou = self.dynamic_k_matching(cost, pair_wise_ious, bz_gtboxs.shape[0])
     
                 indices.append(indices_batchi)
                 matched_ids.append(matched_qidx)
+                ious.append(iou)
                 
 
         
-        return indices, matched_ids
+        return indices, matched_ids, ious
 
     def get_in_boxes_info(self, boxes, target_gts, expanded_strides):
         # size (h,w) 
@@ -169,8 +175,15 @@ class HungarianMatcher(nn.Module):
         cost[matching_matrix==0] = cost[matching_matrix==0] + float('inf')
         matched_query_id = torch.min(cost,dim=0)[1]
 
+        selected_ious = pair_wise_ious[selected_query] # [selected, gt]
+        logger.log_id(f'select_ious.shape: {selected_ious.shape}', 1)
+        logger.log_id(f'pairwise_ious: {pair_wise_ious.shape}, selected_query: {selected_query.shape}, gt_indices: {gt_indices.shape}', 2131)
+        row_indices = torch.arange(int(selected_query.sum())).to(gt_indices)
+        indices_2d = torch.stack([row_indices, gt_indices], dim=1)
+        ious = pair_wise_ious[indices_2d[:, 0], indices_2d[:, 1]]
+        logger.log_id(f'iou.shape: {ious.shape}, value={ious}', 111)
 
-        return (selected_query,gt_indices) , matched_query_id
+        return (selected_query,gt_indices) , matched_query_id, ious
 
 
 def build_matcher(args):

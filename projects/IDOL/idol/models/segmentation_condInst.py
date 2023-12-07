@@ -155,6 +155,9 @@ class CondInst_segm(nn.Module):
         outputs_coords = []
         outputs_masks = []
         indices_list = []
+
+        pred_ious = []
+        gt_ious = []
         enc_lay_num = hs.shape[0]
         
         for lvl in range(enc_lay_num):
@@ -163,7 +166,9 @@ class CondInst_segm(nn.Module):
             else:
                 reference = inter_references[lvl - 1]
             reference = inverse_sigmoid(reference)
-            outputs_class = self.detr.class_embed[lvl](hs[lvl])
+
+            detached_hs = hs[lvl].detach()
+            outputs_class = self.detr.class_embed[lvl](detached_hs)
             tmp = self.detr.bbox_embed[lvl](hs[lvl])
             
             if reference.shape[-1] == 4:
@@ -172,13 +177,14 @@ class CondInst_segm(nn.Module):
                 assert reference.shape[-1] == 2
                 tmp[..., :2] += reference
             outputs_coord = tmp.sigmoid()
+
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
             outputs_layer = {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
             dynamic_mask_head_params = self.controller(hs[lvl])    # [bs, num_quries, num_params]
 
             # for training & log evaluation loss
-            indices, matched_ids = criterion.matcher(outputs_layer, det_targets)
+            indices, matched_ids, ious = criterion.matcher(outputs_layer, det_targets)
             indices_list.append(indices)
             
             reference_points, mask_head_params, num_insts = [], [], []
@@ -190,15 +196,24 @@ class CondInst_segm(nn.Module):
 
                 # This is the image size after data augmentation (so as the gt boxes & masks)
                 if lvl == enc_lay_num - 1:
+                    self.logger.log_id(f'len(ious) = {len(ious)}, len(indices) = {len(indices)}', 213123)
                     """
                     last layer, select hungarian matching items to object queue
                     """
+                    self.logger.log_id(f'tgt_j: {tgt_j}, len(det_targets[i]): {len(det_targets[i])}', 11121)
                     best_items = hs_ref[-1, i, pred_i] # (best_match_num, c)
                     best_embeds = self.reid_embed_head(best_items) # (best_match_num, d)
                     for item in best_embeds:
                         self.object_queue.enqueue(item)
                     self.logger.log_id(f'hs_ref shape = {hs_ref.shape}, hs_ref[-1, i, pred_i].shape={hs_ref[-1, i, pred_i].shape}', 1)
-                
+                    """
+                    calculate box iou loss.
+                    """
+                    selected_iou = ious[i] # (best_match_num, )
+                    pred_iou = self.detr.box_iou_head(best_items).sigmoid().flatten() # (best_match_num, )
+                    pred_ious.append(pred_iou)
+                    gt_ious.append(selected_iou)
+
                 orig_h, orig_w = image_sizes[i]
                 orig_h = torch.as_tensor(orig_h).to(reference)
                 orig_w = torch.as_tensor(orig_w).to(reference)
@@ -230,9 +245,14 @@ class CondInst_segm(nn.Module):
         # outputs['pred_samples'] = inter_samples[-1]
         
         outputs['pred_logits'] = outputs_class[-1]
-        outputs['pred_boxes'] = outputs_coord[-1]
+        outputs['pred_boxes'] = outputs_coord[-1] # [bs, 300, 4]
         outputs['pred_masks'] = outputs_mask[-1]
+
+        self.logger.log_id(f'shape of boxes: {outputs_coord[-1].shape}', 111)
         outputs['pred_qd'] = contrast_items
+        # box ious
+        outputs['pred_ious'] = pred_ious
+        outputs['gt_ious'] = gt_ious
 
         if self.detr.aux_loss:
             outputs['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_mask)
@@ -242,6 +262,7 @@ class CondInst_segm(nn.Module):
         else:
             loss_dict = None
         
+        assert 'pred_ious' in outputs, '??/'
         return outputs, loss_dict
 
 

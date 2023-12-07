@@ -15,12 +15,14 @@ class OneTimeLogger:
             with open(log_file, 'w') as f:
                 f.close()
     def log(self, content: str):
+        content = str(content)
         if content not in self.record:
             with open(self.log_file, 'a') as f:
                 f.write(self.prefix + content + '\n')
                 f.close()
             self.record[content] = True
     def log_id(self, content: str, id: int):
+        content = str(content)
         if id not in self.id_table:
             with open(self.log_file, 'a') as f:
                 f.write(self.prefix + content + '\n')
