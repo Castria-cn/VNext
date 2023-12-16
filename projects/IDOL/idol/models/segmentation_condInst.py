@@ -157,6 +157,7 @@ class CondInst_segm(nn.Module):
         indices_list = []
 
         pred_ious = []
+        pred_mask_ious = []
         gt_ious = []
         enc_lay_num = hs.shape[0]
         
@@ -211,7 +212,9 @@ class CondInst_segm(nn.Module):
                     """
                     selected_iou = ious[i] # (best_match_num, )
                     pred_iou = self.detr.box_iou_head(best_items).sigmoid().flatten() # (best_match_num, )
+                    pred_mask_iou = self.detr.mask_iou_head(best_items).sigmoid().flatten() # (best_match_num, )
                     pred_ious.append(pred_iou)
+                    pred_mask_ious.append(pred_mask_iou)
                     gt_ious.append(selected_iou)
 
                 orig_h, orig_w = image_sizes[i]
@@ -232,7 +235,11 @@ class CondInst_segm(nn.Module):
             outputs_layer = self.forward_mask_head_train(outputs_layer, memory, spatial_shapes, 
                                                          reference_points, mask_head_params, num_insts)
             outputs_masks.append(outputs_layer['pred_masks'])
-            
+
+            if lvl == enc_lay_num - 1:
+                # calculate mask iou
+                # outputs_masks: List[Tensor, len=bs], each item [1, pred, 1, h, w]
+                self.logger.log_id(f'det_targets[i][masks].shape:' + str(det_targets[i]['masks'].shape), 333)
 
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
@@ -249,9 +256,11 @@ class CondInst_segm(nn.Module):
         outputs['pred_masks'] = outputs_mask[-1]
 
         self.logger.log_id(f'shape of boxes: {outputs_coord[-1].shape}', 111)
+        self.logger.log_id(f'type: {type(outputs_mask[-1])}, len: {len(outputs_mask[-1])}, shape of masks: {outputs_mask[-1][0].shape}', 222)
         outputs['pred_qd'] = contrast_items
         # box ious
         outputs['pred_ious'] = pred_ious
+        outputs['pred_mask_ious'] = pred_mask_ious
         outputs['gt_ious'] = gt_ious
 
         if self.detr.aux_loss:
@@ -262,7 +271,6 @@ class CondInst_segm(nn.Module):
         else:
             loss_dict = None
         
-        assert 'pred_ious' in outputs, '??/'
         return outputs, loss_dict
 
 

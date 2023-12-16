@@ -63,6 +63,7 @@ class DeformableDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.box_iou_head = MLP(hidden_dim, hidden_dim, 1, 3)
+        self.mask_iou_head = MLP(hidden_dim, hidden_dim, 1, 3)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.num_feature_levels = num_feature_levels
         
@@ -340,7 +341,6 @@ class SetCriterion(nn.Module):
             src_boxes = torch.cat(pred_box_list)
             target_boxes = torch.cat(tgt_box_list)
             num_boxes = src_boxes.shape[0]
-            
             loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
             losses = {}
             losses['loss_bbox'] = loss_bbox.sum() / num_boxes
@@ -351,7 +351,24 @@ class SetCriterion(nn.Module):
             'loss_giou':outputs['pred_boxes'].sum()*0}
         return losses
 
-        
+    def mask_iou(self, mask1, mask2):
+        """
+        mask1: (bs, 1, h, w)
+        mask2: (bs, 1, h, w)
+        """
+        assert mask1.shape == mask2.shape
+        assert not torch.isnan(mask1).any() and not torch.isnan(mask2).any()
+        mask1 = mask1 > 0.5
+        mask2 = mask2 > 0.5
+
+        intersection = torch.logical_and(mask1, mask2)
+        union = torch.logical_or(mask1, mask2)
+
+        iou_per_sample = torch.sum(intersection, dim=(2, 3)).float() / (torch.sum(union, dim=(2, 3)).float() + 1e-6)
+
+        assert not torch.isnan(iou_per_sample).any()
+
+        return iou_per_sample
 
     def loss_masks(self, outputs,  targets, ref_target, indices, num_boxes):
         """Compute the losses related to the masks: the focal loss and the dice loss.
@@ -397,23 +414,43 @@ class SetCriterion(nn.Module):
             target_masks = torch.cat(tgt_mask_list)
             num_boxes = src_masks.shape[0]
             assert src_masks.shape == target_masks.shape
+           #  self.logger.log_id(f'mask shape: {src_masks.shape}, {target_masks.shape}' + str(torch.cat(outputs['pred_mask_ious']).shape), 555)
 
+            if 'pred_mask_ious' in outputs: # not auxiliary loss
+                # calculate mask iou loss
+                if len(outputs['pred_mask_ious']) == 0:
+                    mask_iou_loss = (src_masks*0).sum()
+                else:
+                    pred_ious = torch.cat(outputs['pred_mask_ious']) # (n, )
+                    gt_ious = self.mask_iou(src_masks, target_masks).flatten()
+                    assert pred_ious.shape == gt_ious.shape, f'why is it {pred_ious.shape}, {gt_ious.shape}?'
+                    self.logger.log_id(f'pred_ious.shape: {pred_ious.shape}, gt_ious.shape: {gt_ious.shape}', 2131)
+                    assert (pred_ious <= 1.0).all() and (gt_ious <= 1.0).all(), f'pred/gt={pred_ious},{gt_ious}'
+                    assert (pred_ious >= 0.0).all() and (gt_ious >= 0.0).all(), '??0'
+                    mask_iou_loss = F.binary_cross_entropy(pred_ious, gt_ious)
+                    assert torch.isnan(mask_iou_loss).any() == False, '??f'
+                    # src_masks: [n, 1, h, w] target_masks: [n, 1, h, w]
+            else:
+                mask_iou_loss = (src_masks*0).sum()
             # src_masks: bs x [1, num_inst, num_frames, H/4, W/4] or [bs, num_inst, num_frames, H/4, W/4]
 
             # src_masks: [num_insts, num_frames, H/4, M/4]
             # src_masks = src_masks[src_idx]
             src_masks = src_masks.flatten(1)
             target_masks = target_masks.flatten(1)
+            
             # src_masks/target_masks: [n_targets, num_frames* H * W]
 
             losses = {
                 "loss_mask": sigmoid_focal_loss(src_masks, target_masks, num_boxes),
                 "loss_dice": dice_loss(src_masks, target_masks, num_boxes),
+                "loss_mask_iou": mask_iou_loss
             }
         else:
             losses = {
             "loss_mask": (src_masks*0).sum(),
             "loss_dice": (src_masks*0).sum(),
+            "loss_mask_iou": (src_masks*0).sum()
             }
         return losses
     
