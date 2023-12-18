@@ -197,16 +197,13 @@ class CondInst_segm(nn.Module):
 
                 # This is the image size after data augmentation (so as the gt boxes & masks)
                 if lvl == enc_lay_num - 1:
-                    self.logger.log_id(f'len(ious) = {len(ious)}, len(indices) = {len(indices)}', 213123)
                     """
                     last layer, select hungarian matching items to object queue
                     """
-                    self.logger.log_id(f'tgt_j: {tgt_j}, len(det_targets[i]): {len(det_targets[i])}', 11121)
                     best_items = hs_ref[-1, i, pred_i] # (best_match_num, c)
                     best_embeds = self.reid_embed_head(best_items) # (best_match_num, d)
                     for item in best_embeds:
                         self.object_queue.enqueue(item)
-                    self.logger.log_id(f'hs_ref shape = {hs_ref.shape}, hs_ref[-1, i, pred_i].shape={hs_ref[-1, i, pred_i].shape}', 1)
                     """
                     calculate box iou loss.
                     """
@@ -338,6 +335,13 @@ class CondInst_segm(nn.Module):
         inst_embed = self.reid_embed_head(hs[-1])
         outputs['pred_inst_embed'] = inst_embed
 
+        # calculate IOUs
+        pred_iou = self.detr.box_iou_head(hs[-1]).sigmoid().squeeze(2) # (bs, query_num, )
+        self.logger.log_id(f'pred_iou.shape: {pred_iou.shape}', 42341)
+        pred_mask_iou = self.detr.mask_iou_head(hs[-1]).sigmoid().squeeze(2) # (bs, query_num, )
+        outputs['pred_ious'] = pred_iou
+        outputs['pred_mask_ious'] = pred_mask_iou
+        # end
 
         outputs['reference_points'] = inter_references[-2, :, :, :2]
         dynamic_mask_head_params = self.controller(hs[-1])    # [bs, num_quries, num_params]            

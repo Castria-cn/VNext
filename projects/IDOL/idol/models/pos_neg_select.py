@@ -75,11 +75,9 @@ def select_pos_neg(ref_box, all_indices, targets, det_targets, embed_head, hs_ke
             """
             calculate sword contrastive loss
             """
-            logger.log_id(f'pos_embed shape={pos_embed.shape}, neg_embed shape={neg_embed.shape}', 6)
             sword_pos = ref_embeds[bz_i][contrastive_pos[0][inst_i]]
             sword_neg = ref_embeds[bz_i][contrastive_pos[1][inst_i] & (~contrastive_pos[0][inst_i])]
             sword_contrast = get_sword_contrast(object_queue, sword_pos, sword_neg)
-            logger.log_id(f'sword_pos shape={sword_pos.shape}, sword_neg shape={sword_neg.shape}', 7)
 
 
             contrastive_embed = torch.cat([pos_embed,neg_embed],dim=0)

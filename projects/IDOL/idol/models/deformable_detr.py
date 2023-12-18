@@ -423,12 +423,7 @@ class SetCriterion(nn.Module):
                 else:
                     pred_ious = torch.cat(outputs['pred_mask_ious']) # (n, )
                     gt_ious = self.mask_iou(src_masks, target_masks).flatten()
-                    assert pred_ious.shape == gt_ious.shape, f'why is it {pred_ious.shape}, {gt_ious.shape}?'
-                    self.logger.log_id(f'pred_ious.shape: {pred_ious.shape}, gt_ious.shape: {gt_ious.shape}', 2131)
-                    assert (pred_ious <= 1.0).all() and (gt_ious <= 1.0).all(), f'pred/gt={pred_ious},{gt_ious}'
-                    assert (pred_ious >= 0.0).all() and (gt_ious >= 0.0).all(), '??0'
-                    mask_iou_loss = F.binary_cross_entropy(pred_ious, gt_ious)
-                    assert torch.isnan(mask_iou_loss).any() == False, '??f'
+                    mask_iou_loss = F.l1_loss(pred_ious, gt_ious)
                     # src_masks: [n, 1, h, w] target_masks: [n, 1, h, w]
             else:
                 mask_iou_loss = (src_masks*0).sum()
@@ -467,7 +462,7 @@ class SetCriterion(nn.Module):
             if len(pred_iou) == 0:
                 continue # invalid
             # (n, ) and (n, ), calculate cross entropy loss
-            iou_loss += F.binary_cross_entropy(pred_iou, gt_iou)
+            iou_loss += F.l1_loss(pred_iou, gt_iou)
         
         if torch.isnan(iou_loss).any().item():
             self.logger.log_id(f'pred_ious: {pred_ious}, gt_ious: {gt_ious}', 123123)

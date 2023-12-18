@@ -24,7 +24,7 @@ from .util.box_ops import box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from .util.misc import NestedTensor
 from .data.coco import convert_coco_poly_to_mask
 import torchvision.ops as ops
-
+from .util.ot_logger import OneTimeLogger
 
 
 __all__ = ["IDOL"]
@@ -77,6 +77,7 @@ class IDOL(nn.Module):
     def __init__(self, cfg):
         super().__init__()
 
+        self.logger = OneTimeLogger('ot_log_inf.txt')
         self.num_frames = cfg.INPUT.SAMPLING_FRAME_NUM
 
         self.device = torch.device(cfg.MODEL.DEVICE)
@@ -254,6 +255,7 @@ class IDOL(nn.Module):
             if video_len > clip_length:
                 num_clips = math.ceil(video_len/clip_length)
                 logits_list, boxes_list, embed_list, points_list, masks_list = [], [], [], [], []
+                ious_list, mask_ious_list = [], []
                 for c in range(num_clips):
                     start_idx = c*clip_length
                     end_idx = (c+1)*clip_length
@@ -265,12 +267,17 @@ class IDOL(nn.Module):
                     embed_list.append(clip_output['pred_inst_embed'])
                     # points_list.append(clip_output['reference_points'])
                     masks_list.append(clip_output['pred_masks'].to(self.merge_device))
+                    ious_list.append(clip_output['pred_ious'])
+                    mask_ious_list.append(clip_output['pred_mask_ious'])
+                    self.logger.log_id(f'ious.shape: ' + str(clip_output['pred_ious'].shape), 222)
                 output = {
                     'pred_logits':torch.cat(logits_list,dim=0),
                     'pred_boxes':torch.cat(boxes_list,dim=0),
                     'pred_inst_embed':torch.cat(embed_list,dim=0),
                     # 'reference_points':torch.cat(points_list,dim=0),
                     'pred_masks':torch.cat(masks_list,dim=0),
+                    'pred_ious': torch.cat(ious_list, dim=0),
+                    'pred_mask_ious': torch.cat(mask_ious_list, dim=0)
                 }    
             else:
                 images = self.preprocess_image(batched_inputs)
@@ -345,11 +352,18 @@ class IDOL(nn.Module):
         output_h, output_w = video_output_masks.shape[-2:]
         video_output_boxes = outputs['pred_boxes']
         video_output_embeds = outputs['pred_inst_embed']
+        video_ious = outputs['pred_ious']
+        video_mask_ious = outputs['pred_mask_ious']
         vid_len = len(vido_logits)
-        for i_frame, (logits, output_mask, output_boxes, output_embed) in enumerate(zip(
-            vido_logits, video_output_masks, video_output_boxes, video_output_embeds
+        for i_frame, (logits, output_mask, output_boxes, output_embed, video_iou, video_mask_iou) in enumerate(zip(
+            vido_logits, video_output_masks, video_output_boxes, video_output_embeds, video_ious, video_mask_ious
          )):
             scores = logits.sigmoid().cpu().detach()  #[300,42]
+            # video_iou, video_mask_iou: [300, ]
+            self.logger.log_id(f'video_len: {vid_len}, shapes: {scores.shape}, video_ious.shape: {video_iou.shape}, video_mask_ious.shape: {video_mask_iou.shape}', 111)
+            video_iou = video_iou.cpu().detach()
+            video_mask_iou = video_mask_iou.cpu().detach()
+            score = torch.pow(scores * video_iou.reshape(-1, 1) * video_mask_iou.reshape(-1, 1), 1/3)
             max_score, _ = torch.max(logits.sigmoid(),1)
             indices = torch.nonzero(max_score>self.inference_select_thres, as_tuple=False).squeeze(1)
             if len(indices) == 0:
